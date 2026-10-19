@@ -1,0 +1,109 @@
+<!doctype html><html lang=zh><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>声音标注</title>
+<style>
+:root{--bg:#faf7f2;--fg:#3a3532;--mute:#8a8079;--accent:#c96f5e;--soft:#efe7dd;--line:#e2d7ca}
+@media(prefers-color-scheme:dark){:root{--bg:#1c1a18;--fg:#e8e2da;--mute:#9a9087;--accent:#d98873;--soft:#2a2724;--line:#3a342e}}
+*{box-sizing:border-box;margin:0;-webkit-tap-highlight-color:transparent}
+body{background:var(--bg);color:var(--fg);font-family:-apple-system,'PingFang SC',sans-serif;
+ padding:16px 16px calc(24px + env(safe-area-inset-bottom));max-width:520px;margin:0 auto}
+header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px}
+h1{font-size:1.05rem;font-weight:600;letter-spacing:.08em}
+#prog{font-size:.8rem;color:var(--mute)}
+.bar{height:3px;background:var(--line);border-radius:2px;margin-bottom:16px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent);width:0;transition:width .3s}
+.card{background:var(--soft);border-radius:16px;padding:16px}
+.meta{font-size:.78rem;color:var(--mute);margin-bottom:8px;display:flex;justify-content:space-between}
+.text{font-size:1rem;line-height:1.6;margin-bottom:14px;word-break:break-word}
+#play{width:100%;height:52px;border-radius:26px;border:none;background:var(--accent);color:var(--bg);
+ font-size:1rem;font-weight:600;letter-spacing:.1em}
+.sec{margin-top:18px}
+.sec h2{font-size:.78rem;color:var(--mute);font-weight:500;margin-bottom:8px;letter-spacing:.05em}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{padding:9px 14px;border-radius:20px;border:1px solid var(--line);background:transparent;
+ color:var(--fg);font-size:.92rem;font-family:inherit}
+.chip.on{background:var(--accent);border-color:var(--accent);color:var(--bg)}
+textarea{width:100%;border:1px solid var(--line);border-radius:12px;background:transparent;color:var(--fg);
+ padding:10px;font:inherit;font-size:16px;resize:vertical;min-height:44px}
+.row{display:flex;gap:10px;margin-top:20px}
+.row button{flex:1;height:48px;border-radius:14px;font-size:.95rem;font-family:inherit;border:1px solid var(--line);
+ background:transparent;color:var(--fg)}
+.row button.primary{background:var(--fg);color:var(--bg);border-color:var(--fg);flex:2}
+.row button:disabled{opacity:.35}
+.nav{display:flex;justify-content:space-between;margin-top:14px;font-size:.85rem}
+.nav button{background:none;border:none;color:var(--accent);font-family:inherit;font-size:.85rem;padding:6px 0}
+#list{display:none;margin-top:16px;flex-direction:column;gap:6px}
+#list div{padding:10px 12px;border-radius:10px;background:var(--soft);font-size:.85rem;display:flex;gap:8px}
+#list div span:first-child{color:var(--mute);white-space:nowrap}
+#list div span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#list div.done{opacity:.55}
+#toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%);
+ background:var(--fg);color:var(--bg);padding:8px 16px;border-radius:18px;font-size:.85rem;opacity:0;transition:opacity .2s;pointer-events:none}
+.hint{font-size:.75rem;color:var(--mute);margin-top:6px}
+.model{margin-top:18px;border:1px dashed var(--line);background:transparent}
+</style></head><body>
+<header><h1>声音标注</h1><span id=prog></span></header>
+<div class=bar><i id=barfill></i></div>
+<div id=main></div>
+<div class=nav><button id=prev>‹ 上一条</button><button id=toggle>全部列表</button><button id=next>下一条 ›</button></div>
+<div id=list></div>
+<div id=toast></div>
+<script>
+const TAGS=__TAGS__;
+const INT=["轻","中","强"];
+let items=[],i=0,audio=new Audio();
+const $=s=>document.querySelector(s);
+function toast(t){const e=$('#toast');e.textContent=t;e.style.opacity=1;setTimeout(()=>e.style.opacity=0,1200)}
+function prog(){const n=items.filter(x=>x.label).length;$('#prog').textContent=`${n} / ${items.length}`;
+ $('#barfill').style.width=(items.length?n/items.length*100:0)+'%'}
+function render(){
+ const it=items[i];if(!it){$('#main').innerHTML='<div class=card>没有语音</div>';return}
+ const L=it.label||{};let sel=new Set(L.skip?[]:(L.tags||[])),inten=L.intensity||null,wrong=!!L.text_wrong,breathy=!!L.breathy;
+ const d=it.ts.slice(5,10).replace('-','月')+'日 '+it.ts.slice(11,16);
+ $('#main').innerHTML=`<div class=card>
+  <div class=meta><span>${d} · ${it.dur}秒</span><span>${L.audio?(L.skip?'已跳过':'已标'):'未标'}</span></div>
+  <div class=text></div>
+  <button id=play>▶ 播放</button></div>
+ <div class=sec><h2>当时的情绪（最多选3个）</h2><div class=chips id=tags></div></div>
+ <div class=sec><h2>强度</h2><div class=chips id=int></div></div>
+ <div class=sec><h2>声音和转写</h2><div class=chips><button class="chip" id=breathy>气音·悄悄话</button><button class="chip" id=wrong>转写不对</button></div></div>
+ <div class=sec><h2>补充（可选，比如“其实在笑”“背景很吵”）</h2><textarea id=note rows=2></textarea></div>
+ <div class=row><button id=skip>听不出 / 跳过</button><button class=primary id=save>保存</button></div>${L.audio?modelCard(it):''}`;
+ $('.text').textContent=it.text||'（无转写）';$('#note').value=L.note||'';
+ const tg=$('#tags');TAGS.forEach(t=>{const b=document.createElement('button');b.className='chip'+(sel.has(t)?' on':'');b.textContent=t;
+  b.onclick=()=>{if(sel.has(t))sel.delete(t);else{if(sel.size>=3)return toast('最多3个');sel.add(t)}b.classList.toggle('on',sel.has(t));upd()};tg.appendChild(b)});
+ const ig=$('#int');INT.forEach((t,k)=>{const b=document.createElement('button');b.className='chip'+(inten===k+1?' on':'');b.textContent=t;
+  b.onclick=()=>{inten=inten===k+1?null:k+1;[...ig.children].forEach((c,j)=>c.classList.toggle('on',inten===j+1))};ig.appendChild(b)});
+ const w=$('#wrong');w.classList.toggle('on',wrong);w.onclick=()=>{wrong=!wrong;w.classList.toggle('on',wrong)};
+ const br=$('#breathy');br.classList.toggle('on',breathy);br.onclick=()=>{breathy=!breathy;br.classList.toggle('on',breathy)};
+ const nx=$('#gonext');if(nx)nx.onclick=()=>go(nextUnlabeled());
+ function upd(){$('#save').disabled=!sel.size}upd();
+ audio.pause();audio=new Audio('audio/'+it.audio);const p=$('#play');
+ audio.onended=()=>p.textContent='▶ 再听一遍';
+ p.onclick=()=>{if(audio.paused){audio.currentTime=0;audio.play();p.textContent='■ 停'}else{audio.pause();p.textContent='▶ 播放'}};
+ async function send(body){const r=await fetch('api/label',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({audio:it.audio,...body})});if(!r.ok)return toast('保存失败');
+  it.label={audio:it.audio,...body};prog();toast('已保存');render();const mc=$('.model');if(mc)mc.scrollIntoView({behavior:'smooth',block:'center'})}
+ $('#save').onclick=()=>send({tags:[...sel],intensity:inten,text_wrong:wrong,breathy,note:$('#note').value.trim()});
+ $('#skip').onclick=()=>send({tags:[],skip:true,text_wrong:wrong,breathy,note:$('#note').value.trim()});
+ if($('#list').style.display==='flex')list();
+}
+function esc(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML}
+function modelCard(it){const m=it.model||{};const old=/^[a-z]+$/.test(m.emotion||'');
+ const ac=(m.acoustic||[]).map(([t,p])=>`${t} ${p.toFixed(2)}`).join('、');
+ return `<div class="card model"><div class=meta><span>当时系统判的${old?'（旧版）':''}</span></div>
+  <div class=text style="margin-bottom:6px">${esc(m.emotion||'—')}</div>
+  ${m.hint?`<div class=hint style="margin:0 0 6px">${esc(m.hint)}</div>`:''}
+  ${ac?`<div class=hint style="margin:0 0 10px">声音模型：${esc(ac)}</div>`:''}
+  <button id=gonext class=primary style="width:100%;height:44px;border-radius:12px;border:none;background:var(--fg);color:var(--bg);font:inherit">下一条未标 ›</button></div>`}
+function nextUnlabeled(){for(let k=i+1;k<items.length;k++)if(!items[k].label)return k;
+ for(let k=0;k<items.length;k++)if(!items[k].label)return k;return Math.min(i+1,items.length-1)}
+function go(k){i=Math.max(0,Math.min(items.length-1,k));render();scrollTo({top:0,behavior:'smooth'})}
+function list(){const l=$('#list');l.innerHTML='';items.forEach((it,k)=>{const r=document.createElement('div');
+ if(it.label)r.className='done';r.innerHTML=`<span>${it.ts.slice(5,10)} ${it.label?(it.label.skip?'跳过':it.label.tags.join('·')):'—'}</span><span></span>`;
+ r.lastChild.textContent=it.text;r.onclick=()=>go(k);l.appendChild(r)})}
+$('#prev').onclick=()=>go(i-1);$('#next').onclick=()=>go(i+1);
+$('#toggle').onclick=()=>{const l=$('#list');if(l.style.display==='flex'){l.style.display='none';$('#toggle').textContent='全部列表'}
+ else{list();l.style.display='flex';$('#toggle').textContent='收起列表'}};
+fetch('api/items').then(r=>r.json()).then(d=>{items=d;prog();const k=items.findIndex(x=>!x.label);i=k<0?0:k;render()});
+</script></body></html>
